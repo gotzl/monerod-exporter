@@ -1,19 +1,16 @@
 # bitcoin-exporter
 
-Serve bitcoind core metrics under `/metrics` path.
+Serve monerod metrics under `/metrics` path.
 
-A direct rewrite of [bitcoin-prometheus-exporter](https://github.com/jvstein/bitcoin-prometheus-exporter) in rust.
-
-Use a forked [rust-bitcoincore-rpc](https://git.itsufficient.me/rust/bitcoincore-rpc)
-with applied [pr157](https://github.com/rust-bitcoin/rust-bitcoincore-rpc/pull/157) and
-[pr171](https://github.com/rust-bitcoin/rust-bitcoincore-rpc/pull/171) and missing rpc calls implemented.
+Forked from [bitcoin-exporter](https://github.com/eburghar/bitcoin-exporter).
+Metrics definitions from [monerod-exporter](https://github.com/hundehausen/monerod-exporter).
 
 ```
-bitcoin-exporter 0.5.4
+monerod-exporter 0.0.1
 
-Usage: bitcoin-exporter [-c <config>] [-v]
+Usage: monerod-exporter [-c <config>] [-v]
 
-Export bitcoin core metrics to prometheus format
+Export monerod metrics to prometheus format
 
 Options:
   -c, --config      configuration file
@@ -22,7 +19,7 @@ Options:
 ```
 
 The configuration accepts the following keys. `host` and `bind` are optional. `user`, `password` and `host` represent
-the bitcoind server rpc parameters.
+the monerod rpc parameters.
 
 ```yaml
 user: user
@@ -31,6 +28,3 @@ host: 'http://localhost:8332'
 bind: '127.0.0.1:9898'
 ```
 
-## Grafana dashboard
-
-![grafana dashboard](dashboard/dashboard.png?raw=true "Grafana dashboard")

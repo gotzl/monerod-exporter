@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result};
 use serde::Deserialize;
 use std::fs::File;
 
@@ -13,7 +13,7 @@ fn default_bind() -> String {
 /// Config file
 #[derive(Deserialize, Clone)]
 pub struct Config {
-	/// bitcoin rpc host
+	/// monerod rpc host
 	#[serde(default = "default_host")]
 	pub host: String,
 	/// rpc user

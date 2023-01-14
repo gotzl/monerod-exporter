@@ -1,177 +1,66 @@
-use bitcoincore_rpc::{Client, Result as ClientResult, RpcApi};
-use bitcoincore_rpc_json::HashOrHeight;
+use anyhow::Result;
+use monero_rpc::InfoClient;
 use hyper::{header::CONTENT_TYPE, Body, Method, Request, Response};
 use prometheus::{Encoder, TextEncoder};
 use std::{net::SocketAddr, sync::Arc};
 
 use crate::metrics::{
-	BITCOIN_BANNED_UNTIL, BITCOIN_BAN_CREATED, BITCOIN_BLOCKS, BITCOIN_CONN_IN, BITCOIN_CONN_OUT,
-	BITCOIN_DIFFICULTY, BITCOIN_HASHPS, BITCOIN_HASHPS_1, BITCOIN_HASHPS_NEG1,
-	BITCOIN_LATEST_BLOCK_FEE, BITCOIN_LATEST_BLOCK_HEIGHT, BITCOIN_LATEST_BLOCK_INPUTS,
-	BITCOIN_LATEST_BLOCK_OUTPUTS, BITCOIN_LATEST_BLOCK_SIZE, BITCOIN_LATEST_BLOCK_TXS,
-	BITCOIN_LATEST_BLOCK_VALUE, BITCOIN_LATEST_BLOCK_WEIGHT, BITCOIN_MEMINFO_CHUNKS_FREE,
-	BITCOIN_MEMINFO_CHUNKS_USED, BITCOIN_MEMINFO_FREE, BITCOIN_MEMINFO_LOCKED,
-	BITCOIN_MEMINFO_TOTAL, BITCOIN_MEMINFO_USED, BITCOIN_MEMPOOL_BYTES, BITCOIN_MEMPOOL_SIZE,
-	BITCOIN_MEMPOOL_UNBROADCAST, BITCOIN_MEMPOOL_USAGE, BITCOIN_NUM_CHAINTIPS, BITCOIN_PEERS,
-	BITCOIN_RPC_ACTIVE, BITCOIN_SIZE_ON_DISK, BITCOIN_TOTAL_BYTES_RECV, BITCOIN_TOTAL_BYTES_SENT,
-	BITCOIN_TXCOUNT, BITCOIN_UPTIME, BITCOIN_VERIFICATION_PROGRESS, BITCOIN_WARNINGS, SMART_FEE_2,
-	SMART_FEE_20, SMART_FEE_3, SMART_FEE_5,
+	MONEROD_BLOCK_DIFFICULTY, MONEROD_CONNECTIONS_INCOMING, MONEROD_TX_MEMPOOL, MONEROD_CONNECTIONS_OUTGOING,
+	MONEROD_BLOCK_REWARD, MONEROD_TX_CHAIN, MONEROD_DATABASE_SIZE, MONEROD_HEIGHT, MONEROD_UPDATE_AVAILABLE,
+	MONEROD_IS_MINING_ACTIVE, MONEROD_MINIG_THREADS, MONEROD_MINING_SPEED, MONEROD_SYNC_PERCENTAGE,
 };
 
-fn get_metrics(rpc: Arc<Client>) -> ClientResult<()> {
-	// use scopes to visualize variables dependencies and divide by async tasks later
+async fn get_metrics(rpc: Arc<InfoClient>) -> Result<()> {
 	{
-		let networkinfo = rpc.get_network_info()?;
+		let info = rpc.get_info().await?;
 		{
-			let blockchaininfo = rpc.get_blockchain_info()?;
-			BITCOIN_BLOCKS.set(blockchaininfo.blocks as f64);
-			BITCOIN_DIFFICULTY.set(blockchaininfo.difficulty as f64);
-			BITCOIN_SIZE_ON_DISK.set(blockchaininfo.size_on_disk as f64);
-			BITCOIN_VERIFICATION_PROGRESS.set(blockchaininfo.verification_progress as f64);
+			MONEROD_BLOCK_DIFFICULTY.set(info.difficulty as f64);
+			MONEROD_CONNECTIONS_INCOMING.set(info.incoming_connections_count as f64);
+			MONEROD_CONNECTIONS_OUTGOING.set(info.outgoing_connections_count as f64);
+			MONEROD_TX_MEMPOOL.set(info.tx_pool_size as f64);
+			MONEROD_TX_CHAIN.set(info.tx_count as f64);
+			MONEROD_DATABASE_SIZE.set(info.database_size as f64);
+			MONEROD_HEIGHT.set(info.height as f64);
+			MONEROD_UPDATE_AVAILABLE.set(info.update_available as u8 as f64);
+		}
+		let mining_status = rpc.mining_status().await?;
+		if info.restricted {
+			MONEROD_IS_MINING_ACTIVE.set(-1.);
+			MONEROD_MINIG_THREADS.set(-1.);
+			MONEROD_MINING_SPEED.set(-1.);
+		} else {
+			MONEROD_IS_MINING_ACTIVE.set(mining_status.active as u8 as f64);
+			MONEROD_MINIG_THREADS.set(mining_status.threads_count as f64);
+			MONEROD_MINING_SPEED.set(mining_status.speed as f64);
+		}
+	}
 
-			{
-				let uptime = rpc.uptime()?;
-				BITCOIN_UPTIME
-					.with_label_values(&[
-						&networkinfo.version.to_string(),
-						&networkinfo.protocol_version.to_string(),
-						&blockchaininfo.chain,
-					])
-					.set(uptime as f64);
+	{
+		let syncinfo = rpc.sync_info().await?;
+		let sync_percentage = {
+			if syncinfo.target_height > syncinfo.height {
+				(syncinfo.height as f64 / syncinfo.target_height as f64) * 100.
+			} else {
+				100.
 			}
-
-
-			{
-				let latest_blockstats =
-					rpc.get_block_stats2(HashOrHeight::Hash(blockchaininfo.best_block_hash), None)?;
-				BITCOIN_LATEST_BLOCK_SIZE.set(latest_blockstats.total_size as f64);
-				BITCOIN_LATEST_BLOCK_TXS.set(latest_blockstats.txs as f64);
-				BITCOIN_LATEST_BLOCK_HEIGHT.set(latest_blockstats.height as f64);
-				BITCOIN_LATEST_BLOCK_WEIGHT.set(latest_blockstats.total_weight as f64);
-				BITCOIN_LATEST_BLOCK_INPUTS.set(latest_blockstats.ins as f64);
-				BITCOIN_LATEST_BLOCK_OUTPUTS.set(latest_blockstats.outs as f64);
-				BITCOIN_LATEST_BLOCK_VALUE.set(latest_blockstats.total_out.as_btc() as f64);
-				BITCOIN_LATEST_BLOCK_FEE.set(latest_blockstats.total_fee.as_btc() as f64);
-			}
-		}
-
-		BITCOIN_PEERS.set(networkinfo.connections as f64);
-
-		if let Some(connections_in) = networkinfo.connections_in {
-			BITCOIN_CONN_IN.set(connections_in as f64);
-		}
-		if let Some(connections_out) = networkinfo.connections_out {
-			BITCOIN_CONN_OUT.set(connections_out as f64);
-		}
-
-		if !networkinfo.warnings.is_empty() {
-			BITCOIN_WARNINGS.inc()
-		}
+		};
+		MONEROD_SYNC_PERCENTAGE.set(sync_percentage);
 	}
 
 	{
-		let smartfee = rpc.estimate_smart_fee(2, None)?;
-		if let Some(fee_rate) = smartfee.fee_rate {
-			SMART_FEE_2.set(fee_rate.as_sat() as f64)
-		}
-	}
-
-	{
-		let smartfee = rpc.estimate_smart_fee(3, None)?;
-		if let Some(fee_rate) = smartfee.fee_rate {
-			SMART_FEE_3.set(fee_rate.as_sat() as f64)
-		}
-	}
-
-	{
-		let smartfee = rpc.estimate_smart_fee(5, None)?;
-		if let Some(fee_rate) = smartfee.fee_rate {
-			SMART_FEE_5.set(fee_rate.as_sat() as f64)
-		}
-	}
-
-	{
-		let smartfee = rpc.estimate_smart_fee(20, None)?;
-		if let Some(fee_rate) = smartfee.fee_rate {
-			SMART_FEE_20.set(fee_rate.as_sat() as f64)
-		}
-	}
-
-	{
-		let hashps = rpc.get_network_hash_ps(Some(120), None)?;
-		BITCOIN_HASHPS.set(hashps);
-	}
-
-	{
-		let hashps = rpc.get_network_hash_ps(Some(0), None)?;
-		BITCOIN_HASHPS_NEG1.set(hashps);
-	}
-
-	{
-		let hashps = rpc.get_network_hash_ps(Some(1), None)?;
-		BITCOIN_HASHPS_1.set(hashps);
-	}
-
-	{
-		let banned = rpc.list_banned()?;
-		for ban in banned.iter() {
-			BITCOIN_BAN_CREATED
-				.with_label_values(&[&ban.address, "manually added"])
-				.set(ban.ban_created as f64);
-			BITCOIN_BANNED_UNTIL
-				.with_label_values(&[&ban.address, "manually added"])
-				.set(ban.banned_until as f64);
-		}
-	}
-
-	{
-		let txstats = rpc.get_chain_tx_stats(None, None)?;
-		BITCOIN_TXCOUNT.set(txstats.txcount as f64);
-	}
-
-	{
-		let chaintips = rpc.get_chain_tips()?;
-		BITCOIN_NUM_CHAINTIPS.set(chaintips.len() as f64);
-	}
-
-	{
-		let meminfo = rpc.get_memory_info()?;
-		BITCOIN_MEMINFO_USED.set(meminfo.locked.used as f64);
-		BITCOIN_MEMINFO_FREE.set(meminfo.locked.free as f64);
-		BITCOIN_MEMINFO_TOTAL.set(meminfo.locked.total as f64);
-		BITCOIN_MEMINFO_LOCKED.set(meminfo.locked.locked as f64);
-		BITCOIN_MEMINFO_CHUNKS_USED.set(meminfo.locked.chunks_used as f64);
-		BITCOIN_MEMINFO_CHUNKS_FREE.set(meminfo.locked.chunks_free as f64);
-	}
-
-	{
-		let mempool = rpc.get_mempool_info()?;
-		BITCOIN_MEMPOOL_BYTES.set(mempool.bytes as f64);
-		BITCOIN_MEMPOOL_SIZE.set(mempool.size as f64);
-		BITCOIN_MEMPOOL_USAGE.set(mempool.usage as f64);
-		BITCOIN_MEMPOOL_UNBROADCAST.set(mempool.unbroadcastcount as f64);
-	}
-
-	{
-		let netotals = rpc.get_net_totals()?;
-		BITCOIN_TOTAL_BYTES_RECV.set(netotals.total_bytes_recv as f64);
-		BITCOIN_TOTAL_BYTES_SENT.set(netotals.total_bytes_sent as f64);
-	}
-
-	{
-		let rpcinfo = rpc.get_rpc_info()?;
-		BITCOIN_RPC_ACTIVE.set((rpcinfo.active_commands.len() - 1) as f64);
+		let last_block_header = rpc.last_block_header().await?;
+		MONEROD_BLOCK_REWARD.set(last_block_header.block_header.reward.as_xmr() as f64)
 	}
 
 	Ok(())
 }
 
-/// Create Prometheus metrics to track bitcoind stats.
+/// Create Prometheus metrics to track monerod stats.
 pub(crate) async fn serve_req(
 	req: Request<Body>,
 	addr: SocketAddr,
-	rpc: Arc<Client>,
-) -> ClientResult<Response<Body>> {
+	rpc: Arc<InfoClient>,
+) -> Result<Response<Body>> {
 	if req.method() != Method::GET || req.uri().path() != "/metrics" {
 		log::warn!("  [{}] {} {}", addr, req.method(), req.uri().path());
 		return Ok(Response::builder()
@@ -180,7 +69,7 @@ pub(crate) async fn serve_req(
 			.unwrap());
 	}
 
-	let response = match get_metrics(rpc) {
+	let response = match get_metrics(rpc).await {
 		Ok(_) => {
 			let metric_families = prometheus::gather();
 			let encoder = TextEncoder::new();

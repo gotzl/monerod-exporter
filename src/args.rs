@@ -1,11 +1,11 @@
 use argh::{FromArgs, TopLevelCommand};
 use std::{env, path::Path};
 
-/// Export bitcoin core metrics to prometheus format
+/// Export monerod metrics to prometheus format
 #[derive(FromArgs)]
 pub struct Args {
-	/// configuration file (/etc/bitcoin/exporter.yaml)
-	#[argh(option, short = 'c', default = "\"/etc/bitcoin/exporter.yaml\".to_owned()")]
+	/// configuration file (/etc/monero/exporter.yaml)
+	#[argh(option, short = 'c', default = "\"/etc/monero/exporter.yaml\".to_owned()")]
 	pub config: String,
 
 	/// more detailed output
