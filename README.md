@@ -1,4 +1,4 @@
-# bitcoin-exporter
+# monerod-exporter
 
 Serve monerod metrics under `/metrics` path.
 
